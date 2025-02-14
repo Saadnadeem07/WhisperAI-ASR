@@ -12,6 +12,9 @@ from gtts import gTTS
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment  # For audio processing
 
+# ✅ Ensure FFmpeg Path
+AudioSegment.converter = "/usr/bin/ffmpeg"
+
 # ✅ Custom Modern UI Styling
 st.markdown("""
     <style>
@@ -39,7 +42,7 @@ st.markdown("""
 # ✅ Load Whisper Model (Optimized for CPU)
 @st.cache_resource
 def load_model():
-    return whisper.load_model("small", device="cpu")  # Running on CPU for stability
+    return whisper.load_model("base", device="cpu")  # Running on CPU for stability
 
 model = load_model()
 
@@ -55,7 +58,6 @@ sentiment_model, emotion_model, summarizer = load_nlp_models()
 
 # ✅ Preprocess Audio (Convert to Mono & 16kHz)
 def preprocess_audio(audio_path):
-    """Ensures audio is in the correct format before transcription."""
     try:
         audio = AudioSegment.from_file(audio_path)
         audio = audio.set_channels(1).set_frame_rate(16000)
@@ -68,7 +70,6 @@ def preprocess_audio(audio_path):
 
 # ✅ Sentiment Analysis
 def analyze_sentiment(text):
-    """Performs Sentiment Analysis."""
     if not text.strip():
         return "Neutral"
     result = sentiment_model(text)[0]
@@ -76,7 +77,6 @@ def analyze_sentiment(text):
 
 # ✅ Emotion Detection
 def detect_emotion(text):
-    """Detects Emotion in Text."""
     if not text.strip():
         return "Neutral"
     result = emotion_model(text)[0]
@@ -84,14 +84,12 @@ def detect_emotion(text):
 
 # ✅ Text Summarization
 def summarize_text(text):
-    """Generates a high-quality summary."""
     if len(text.split()) < 30:
         return "⚠ Text too short for summarization."
     return summarizer(text, max_length=50, min_length=20, do_sample=False)[0]['summary_text']
 
 # ✅ Translation
 def translate_text(text, target_language):
-    """Translates transcribed text."""
     try:
         return GoogleTranslator(source="auto", target=target_language).translate(text)
     except Exception as e:
@@ -99,7 +97,6 @@ def translate_text(text, target_language):
 
 # ✅ Text-to-Speech
 def text_to_speech(text, lang="en"):
-    """Converts text to speech."""
     try:
         output_path = "tts_output.mp3"
         tts = gTTS(text=text, lang=lang)
@@ -131,14 +128,12 @@ translation_lang = st.selectbox("🌍 Translate Transcription To:", list(transla
 
 if uploaded_file:
     st.audio(uploaded_file, format="audio/mp3")
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
         temp_file.write(uploaded_file.read())
         temp_audio_path = temp_file.name
 
-    # ✅ Preprocess Audio
     temp_audio_path = preprocess_audio(temp_audio_path)
-
+    
     if st.button("📝 Transcribe & Analyze"):
         with st.spinner(f"Transcribing in {language}... Please wait."):
             try:
@@ -147,27 +142,23 @@ if uploaded_file:
                 st.session_state.sentiment_result = analyze_sentiment(st.session_state.transcribed_text)
                 st.session_state.emotion_result = detect_emotion(st.session_state.transcribed_text)
                 st.session_state.summary_result = summarize_text(st.session_state.transcribed_text)
-
                 if translation_mapping[translation_lang]:
                     st.session_state.translated_text = translate_text(st.session_state.transcribed_text, translation_mapping[translation_lang])
-
             except Exception as e:
                 st.error(f"⚠ Transcription Failed: {str(e)}")
+    
+    if os.path.exists(temp_audio_path):
+        os.remove(temp_audio_path)
 
-    # ✅ Display Results
     if st.session_state.transcribed_text:
         st.markdown("<h2>📝 Results</h2>", unsafe_allow_html=True)
         st.text_area("📜 **Transcribed Text:**", st.session_state.transcribed_text, height=120)
         st.write("💬 **Sentiment Analysis:**", st.session_state.sentiment_result)
         st.write("🎭 **Emotion Analysis:**", st.session_state.emotion_result)
         st.text_area("📄 **Summarized Text:**", st.session_state.summary_result, height=80)
-
         if translation_mapping[translation_lang]:
             st.text_area("🌍 **Translated Text:**", st.session_state.translated_text, height=80)
-
         if st.button("🔍 Search on Google"):
             search_query = st.session_state.transcribed_text.replace(" ", "+")
             google_url = f"https://www.google.com/search?q={search_query}"
             st.markdown(f'<a href="{google_url}" target="_blank">Click here to search</a>', unsafe_allow_html=True)
-
-    os.remove(temp_audio_path)
