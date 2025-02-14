@@ -1,0 +1,10 @@
+streamlit
+numpy
+scipy
+sounddevice
+tensorflow
+torch
+pandas
+whisper
+google-generativeai
+transformers
