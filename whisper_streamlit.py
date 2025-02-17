@@ -12,6 +12,7 @@ from pydub import AudioSegment
 from sklearn.feature_extraction.text import CountVectorizer
 from fuzzywuzzy import fuzz
 import spacy
+import spacy.cli  # Import spacy.cli globally to avoid local shadowing issues
 
 # ✅ Ensure FFmpeg Path
 # Adjust the path if necessary for your deployment environment.
@@ -31,7 +32,6 @@ def load_nlp_models():
         ner_model = spacy.load("en_core_web_sm")
     except Exception as e:
         st.warning(f"spaCy model 'en_core_web_sm' not found or failed to load due to error: {e}. Downloading the model...")
-        import spacy.cli
         spacy.cli.download("en_core_web_sm")
         ner_model = spacy.load("en_core_web_sm")
     return ner_model
@@ -43,7 +43,6 @@ def preprocess_audio(audio_path):
     try:
         audio = AudioSegment.from_file(audio_path)
         audio = audio.set_channels(1).set_frame_rate(16000)
-        # Use os.path.splitext for robust file extension handling
         base, _ = os.path.splitext(audio_path)
         processed_audio_path = base + "_processed.wav"
         audio.export(processed_audio_path, format="wav")
@@ -88,20 +87,15 @@ if "transcribed_text" not in st.session_state:
 # ✅ Streamlit App Interface
 st.markdown("<h1 style='text-align: center;'>🎙️ Whisper AI - Audio Processing & Analysis</h1>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader("📂 Upload your audio file", type=["mp3", "wav", "m4a"])
-
-# Reference Text for Phonetic Similarity Check
 reference_text = st.text_area("✏️ Enter Reference Text for Phonetic Similarity Check:", "")
 
 if uploaded_file:
-    # Display the uploaded audio file
     st.audio(uploaded_file, format="audio/mp3")
     
-    # Save the uploaded file to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
         temp_file.write(uploaded_file.read())
         temp_audio_path = temp_file.name
 
-    # Preprocess the audio file
     temp_audio_path = preprocess_audio(temp_audio_path)
     
     if st.button("📝 Transcribe & Analyze"):
@@ -119,11 +113,9 @@ if uploaded_file:
             except Exception as e:
                 st.error(f"⚠ Transcription Failed: {str(e)}")
     
-    # Clean up temporary audio file
     if os.path.exists(temp_audio_path):
         os.remove(temp_audio_path)
 
-    # Display results
     if st.session_state.transcribed_text:
         st.markdown("<h2>📝 Results</h2>", unsafe_allow_html=True)
         st.text_area("📜 Transcribed Text:", st.session_state.transcribed_text, height=120)
