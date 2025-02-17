@@ -1,173 +1,173 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
+import whisper
 import tempfile
 import os
 import torch
 import soundfile as sf
 import numpy as np
-from collections import Counter
+from textblob import TextBlob
 from transformers import pipeline
-from pydub import AudioSegment
-from sklearn.feature_extraction.text import CountVectorizer
-from fuzzywuzzy import fuzz
+from gtts import gTTS
+from deep_translator import GoogleTranslator
+from pydub import AudioSegment  # For audio processing
 
-# -----------------------------
-# SPAcy for Named Entity Recognition
-# -----------------------------
-import spacy
-import spacy.cli  # Import spacy.cli globally to avoid local shadowing issues
+# ✅ Custom Modern UI Styling
+st.markdown("""
+    <style>
+    body { background-color: #121212; color: #E5C100; font-family: 'Arial', sans-serif; }
+    .stTextInput, .stFileUploader, .stTextArea, .stSelectbox, .stButton > button {
+        background-color: #333;
+        color: white;
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 16px;
+    }
+    .stButton > button:hover {
+        background-color: #E5C100;
+        color: black;
+    }
+    .result-card {
+        background-color: #1E1E1E;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 15px rgba(229, 193, 0, 0.4);
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-# -----------------------------
-# Faster Whisper (instead of openai-whisper)
-# -----------------------------
-from faster_whisper import WhisperModel
-
-# --------------------------------------------------------------------
-# FFmpeg Path (adjust if your environment differs)
-# --------------------------------------------------------------------
-AudioSegment.converter = "/usr/bin/ffmpeg"
-
-# --------------------------------------------------------------------
-# Load the Faster Whisper Model (Optimized for CPU by default)
-#   compute_type can be: "int8_float16", "int8", "float32", etc.
-# --------------------------------------------------------------------
+# ✅ Load Whisper Model (Optimized for CPU)
 @st.cache_resource
 def load_model():
-    return WhisperModel("base", device="cpu", compute_type="int8_float16")
+    return whisper.load_model("small", device="cpu")  # Running on CPU for stability
 
 model = load_model()
 
-# --------------------------------------------------------------------
-# A helper function to run transcription with Faster Whisper
-# --------------------------------------------------------------------
-def transcribe_audio(audio_path: str) -> str:
-    segments, info = model.transcribe(audio_path)
-    # Concatenate all segments into a single string
-    full_text = "".join(segment.text for segment in segments)
-    return full_text
-
-# --------------------------------------------------------------------
-# Load NLP Models with spaCy model download check
-# --------------------------------------------------------------------
+# ✅ Load NLP Models
 @st.cache_resource
 def load_nlp_models():
-    try:
-        ner_model = spacy.load("en_core_web_sm")
-    except Exception as e:
-        st.warning(f"spaCy model 'en_core_web_sm' not found or failed to load due to error: {e}. "
-                   f"Downloading the model...")
-        spacy.cli.download("en_core_web_sm")
-        ner_model = spacy.load("en_core_web_sm")
-    return ner_model
+    sentiment_model = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+    emotion_model = pipeline("text-classification", model="j-hartmann/emotion-english-distilroberta-base")
+    summarizer = pipeline("summarization", model="t5-small")  # Lighter model for Streamlit
+    return sentiment_model, emotion_model, summarizer
 
-ner_model = load_nlp_models()
+sentiment_model, emotion_model, summarizer = load_nlp_models()
 
-# --------------------------------------------------------------------
-# Preprocess Audio (Convert to Mono & 16kHz)
-# --------------------------------------------------------------------
+# ✅ Preprocess Audio (Convert to Mono & 16kHz)
 def preprocess_audio(audio_path):
+    """Ensures audio is in the correct format before transcription."""
     try:
         audio = AudioSegment.from_file(audio_path)
         audio = audio.set_channels(1).set_frame_rate(16000)
-        base, _ = os.path.splitext(audio_path)
-        processed_audio_path = base + "_processed.wav"
+        processed_audio_path = audio_path.replace(".mp3", "_processed.wav")
         audio.export(processed_audio_path, format="wav")
         return processed_audio_path
     except Exception as e:
         st.error(f"⚠ Audio Processing Failed: {str(e)}")
         return audio_path
 
-# --------------------------------------------------------------------
-# Keyword Extraction
-# --------------------------------------------------------------------
-def extract_keywords(text, num_keywords=5):
-    vectorizer = CountVectorizer(stop_words="english")
-    word_counts = vectorizer.fit_transform([text])
-    words = vectorizer.get_feature_names_out()
-    counts = word_counts.toarray().sum(axis=0)
-    keyword_counts = sorted(zip(words, counts), key=lambda x: x[1], reverse=True)
-    return [word for word, count in keyword_counts[:num_keywords]]
+# ✅ Sentiment Analysis
+def analyze_sentiment(text):
+    """Performs Sentiment Analysis."""
+    if not text.strip():
+        return "Neutral"
+    result = sentiment_model(text)[0]
+    return f"🌟 **{result['label']}** (Confidence: {result['score']:.2f})"
 
-# --------------------------------------------------------------------
-# Named Entity Recognition (NER)
-# --------------------------------------------------------------------
-def named_entity_recognition(text):
-    doc = ner_model(text)
-    entities = [(ent.text, ent.label_) for ent in doc.ents]
-    return entities if entities else "No entities found."
+# ✅ Emotion Detection
+def detect_emotion(text):
+    """Detects Emotion in Text."""
+    if not text.strip():
+        return "Neutral"
+    result = emotion_model(text)[0]
+    return f"🎭 **{result['label']}** (Confidence: {result['score']:.2f})"
 
-# --------------------------------------------------------------------
-# Phonetic Similarity Check
-# --------------------------------------------------------------------
-def phonetic_similarity(text, reference_text):
-    return fuzz.ratio(text, reference_text)
+# ✅ Text Summarization
+def summarize_text(text):
+    """Generates a high-quality summary."""
+    if len(text.split()) < 30:
+        return "⚠ Text too short for summarization."
+    return summarizer(text, max_length=50, min_length=20, do_sample=False)[0]['summary_text']
 
-# --------------------------------------------------------------------
-# Word Frequency Analysis
-# --------------------------------------------------------------------
-def word_frequency_analysis(text):
-    words = text.lower().split()
-    word_counts = Counter(words)
-    return word_counts.most_common(5)
+# ✅ Translation
+def translate_text(text, target_language):
+    """Translates transcribed text."""
+    try:
+        return GoogleTranslator(source="auto", target=target_language).translate(text)
+    except Exception as e:
+        return f"⚠ Translation Error: {str(e)}"
 
-# --------------------------------------------------------------------
-# Session Storage Initialization
-# --------------------------------------------------------------------
+# ✅ Text-to-Speech
+def text_to_speech(text, lang="en"):
+    """Converts text to speech."""
+    try:
+        output_path = "tts_output.mp3"
+        tts = gTTS(text=text, lang=lang)
+        tts.save(output_path)
+        return output_path
+    except:
+        return None
+
+# ✅ Session Storage
 if "transcribed_text" not in st.session_state:
     st.session_state.transcribed_text = ""
-    st.session_state.keyword_result = ""
-    st.session_state.ner_result = ""
-    st.session_state.similarity_score = ""
-    st.session_state.word_frequencies = ""
+    st.session_state.sentiment_result = ""
+    st.session_state.emotion_result = ""
+    st.session_state.summary_result = ""
+    st.session_state.translated_text = ""
 
-# --------------------------------------------------------------------
-# Streamlit App Interface
-# --------------------------------------------------------------------
-st.markdown("<h1 style='text-align: center;'>🎙️ Whisper AI - Audio Processing & Analysis</h1>", unsafe_allow_html=True)
-
+# ✅ Upload Audio File
+st.markdown("<h1 style='text-align: center;'>🎙️ Whisper AI - Voice to Google Search with Analysis</h1>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader("📂 Upload your audio file", type=["mp3", "wav", "m4a"])
-reference_text = st.text_area("✏️ Enter Reference Text for Phonetic Similarity Check:", "")
+
+# ✅ Language Selection
+language_mapping = {"English": "en", "Urdu": "ur", "Spanish": "es", "French": "fr", "Hindi": "hi"}
+language = st.selectbox("🌍 Select Language for Transcription", list(language_mapping.keys()), index=0)
+language_code = language_mapping[language]
+
+# ✅ Translation Selection
+translation_mapping = {"No Translation": None, "English": "en", "Urdu": "ur", "Spanish": "es", "French": "fr", "Hindi": "hi", "German": "de", "Chinese": "zh-CN"}
+translation_lang = st.selectbox("🌍 Translate Transcription To:", list(translation_mapping.keys()), index=0)
 
 if uploaded_file:
     st.audio(uploaded_file, format="audio/mp3")
 
-    # Save the uploaded file to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
         temp_file.write(uploaded_file.read())
         temp_audio_path = temp_file.name
 
-    # Preprocess the audio file (mono + 16kHz)
+    # ✅ Preprocess Audio
     temp_audio_path = preprocess_audio(temp_audio_path)
 
     if st.button("📝 Transcribe & Analyze"):
-        with st.spinner("Transcribing... Please wait."):
+        with st.spinner(f"Transcribing in {language}... Please wait."):
             try:
-                # Perform transcription using Faster Whisper
-                result_text = transcribe_audio(temp_audio_path)
-                st.session_state.transcribed_text = result_text
+                result = model.transcribe(temp_audio_path, language=language_code)
+                st.session_state.transcribed_text = result['text']
+                st.session_state.sentiment_result = analyze_sentiment(st.session_state.transcribed_text)
+                st.session_state.emotion_result = detect_emotion(st.session_state.transcribed_text)
+                st.session_state.summary_result = summarize_text(st.session_state.transcribed_text)
 
-                # Perform additional analysis
-                st.session_state.keyword_result = extract_keywords(result_text)
-                st.session_state.ner_result = named_entity_recognition(result_text)
-                st.session_state.word_frequencies = word_frequency_analysis(result_text)
+                if translation_mapping[translation_lang]:
+                    st.session_state.translated_text = translate_text(st.session_state.transcribed_text, translation_mapping[translation_lang])
 
-                if reference_text:
-                    st.session_state.similarity_score = phonetic_similarity(
-                        result_text, reference_text
-                    )
             except Exception as e:
                 st.error(f"⚠ Transcription Failed: {str(e)}")
 
-    # Clean up temporary audio file
-    if os.path.exists(temp_audio_path):
-        os.remove(temp_audio_path)
-
-    # Display results
+    # ✅ Display Results
     if st.session_state.transcribed_text:
         st.markdown("<h2>📝 Results</h2>", unsafe_allow_html=True)
-        st.text_area("📜 Transcribed Text:", st.session_state.transcribed_text, height=120)
-        st.write("🔑 Extracted Keywords:", ", ".join(st.session_state.keyword_result))
-        st.write("🏷 Named Entities:", st.session_state.ner_result)
-        st.write("📊 Word Frequency Analysis:", st.session_state.word_frequencies)
-        if reference_text:
-            st.write(f"🎵 Phonetic Similarity with Reference: {st.session_state.similarity_score}%")
+        st.text_area("📜 **Transcribed Text:**", st.session_state.transcribed_text, height=120)
+        st.write("💬 **Sentiment Analysis:**", st.session_state.sentiment_result)
+        st.write("🎭 **Emotion Analysis:**", st.session_state.emotion_result)
+        st.text_area("📄 **Summarized Text:**", st.session_state.summary_result, height=80)
+
+        if translation_mapping[translation_lang]:
+            st.text_area("🌍 **Translated Text:**", st.session_state.translated_text, height=80)
+
+        if st.button("🔍 Search on Google"):
+            search_query = st.session_state.transcribed_text.replace(" ", "+")
+            google_url = f"https://www.google.com/search?q={search_query}"
+            st.markdown(f'<a href="{google_url}" target="_blank">Click here to search</a>', unsafe_allow_html=True)
+
+    os.remove(temp_audio_path)
