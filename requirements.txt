@@ -12,4 +12,5 @@ pydub
 ffmpeg-python
 python-Levenshtein
 fuzzywuzzy
+spacy
 scikit-learn
