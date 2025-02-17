@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*
+# -*- coding: utf-8 -*-
 import streamlit as st
 import whisper
 import tempfile
@@ -14,6 +14,7 @@ from fuzzywuzzy import fuzz
 import spacy
 
 # ✅ Ensure FFmpeg Path
+# Adjust the path if necessary for your deployment environment.
 AudioSegment.converter = "/usr/bin/ffmpeg"
 
 # ✅ Load Whisper Model (Optimized for CPU)
@@ -23,10 +24,16 @@ def load_model():
 
 model = load_model()
 
-# ✅ Load NLP Models
+# ✅ Load NLP Models with spaCy model download check
 @st.cache_resource
 def load_nlp_models():
-    ner_model = spacy.load("en_core_web_sm")
+    try:
+        ner_model = spacy.load("en_core_web_sm")
+    except OSError:
+        # Download the model if it's not found
+        import spacy.cli
+        spacy.cli.download("en_core_web_sm")
+        ner_model = spacy.load("en_core_web_sm")
     return ner_model
 
 ner_model = load_nlp_models()
@@ -36,7 +43,9 @@ def preprocess_audio(audio_path):
     try:
         audio = AudioSegment.from_file(audio_path)
         audio = audio.set_channels(1).set_frame_rate(16000)
-        processed_audio_path = audio_path.replace(".mp3", "_processed.wav")
+        # Use os.path.splitext for robust file extension handling
+        base, _ = os.path.splitext(audio_path)
+        processed_audio_path = base + "_processed.wav"
         audio.export(processed_audio_path, format="wav")
         return processed_audio_path
     except Exception as e:
@@ -68,7 +77,7 @@ def word_frequency_analysis(text):
     word_counts = Counter(words)
     return word_counts.most_common(5)
 
-# ✅ Session Storage
+# ✅ Session Storage Initialization
 if "transcribed_text" not in st.session_state:
     st.session_state.transcribed_text = ""
     st.session_state.keyword_result = ""
@@ -76,19 +85,23 @@ if "transcribed_text" not in st.session_state:
     st.session_state.similarity_score = ""
     st.session_state.word_frequencies = ""
 
-# ✅ Upload Audio File
+# ✅ Streamlit App Interface
 st.markdown("<h1 style='text-align: center;'>🎙️ Whisper AI - Audio Processing & Analysis</h1>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader("📂 Upload your audio file", type=["mp3", "wav", "m4a"])
 
-# ✅ Reference Text for Similarity Check
+# Reference Text for Phonetic Similarity Check
 reference_text = st.text_area("✏️ Enter Reference Text for Phonetic Similarity Check:", "")
 
 if uploaded_file:
+    # Display the uploaded audio file
     st.audio(uploaded_file, format="audio/mp3")
+    
+    # Save the uploaded file to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
         temp_file.write(uploaded_file.read())
         temp_audio_path = temp_file.name
 
+    # Preprocess the audio file
     temp_audio_path = preprocess_audio(temp_audio_path)
     
     if st.button("📝 Transcribe & Analyze"):
@@ -100,18 +113,22 @@ if uploaded_file:
                 st.session_state.ner_result = named_entity_recognition(st.session_state.transcribed_text)
                 st.session_state.word_frequencies = word_frequency_analysis(st.session_state.transcribed_text)
                 if reference_text:
-                    st.session_state.similarity_score = phonetic_similarity(st.session_state.transcribed_text, reference_text)
+                    st.session_state.similarity_score = phonetic_similarity(
+                        st.session_state.transcribed_text, reference_text
+                    )
             except Exception as e:
                 st.error(f"⚠ Transcription Failed: {str(e)}")
     
+    # Clean up temporary audio file
     if os.path.exists(temp_audio_path):
         os.remove(temp_audio_path)
 
+    # Display results
     if st.session_state.transcribed_text:
         st.markdown("<h2>📝 Results</h2>", unsafe_allow_html=True)
-        st.text_area("📜 **Transcribed Text:**", st.session_state.transcribed_text, height=120)
-        st.write("🔑 **Extracted Keywords:**", ", ".join(st.session_state.keyword_result))
-        st.write("🏷 **Named Entities:**", st.session_state.ner_result)
-        st.write("📊 **Word Frequency Analysis:**", st.session_state.word_frequencies)
+        st.text_area("📜 Transcribed Text:", st.session_state.transcribed_text, height=120)
+        st.write("🔑 Extracted Keywords:", ", ".join(st.session_state.keyword_result))
+        st.write("🏷 Named Entities:", st.session_state.ner_result)
+        st.write("📊 Word Frequency Analysis:", st.session_state.word_frequencies)
         if reference_text:
-            st.write(f"🎵 **Phonetic Similarity with Reference:** {st.session_state.similarity_score}%")
+            st.write(f"🎵 Phonetic Similarity with Reference: {st.session_state.similarity_score}%")
