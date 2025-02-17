@@ -1,5 +1,5 @@
 streamlit
-openai-whisper
+faster-whisper
 torch
 torchaudio
 numpy
