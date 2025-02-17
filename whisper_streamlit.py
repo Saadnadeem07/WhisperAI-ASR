@@ -29,8 +29,8 @@ model = load_model()
 def load_nlp_models():
     try:
         ner_model = spacy.load("en_core_web_sm")
-    except OSError:
-        # Download the model if it's not found
+    except Exception as e:
+        st.warning(f"spaCy model 'en_core_web_sm' not found or failed to load due to error: {e}. Downloading the model...")
         import spacy.cli
         spacy.cli.download("en_core_web_sm")
         ner_model = spacy.load("en_core_web_sm")
