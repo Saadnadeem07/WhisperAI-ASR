@@ -1,5 +1,5 @@
 streamlit
-faster-whisper
+openai-whisper
 torch
 torchaudio
 numpy
@@ -10,7 +10,3 @@ gtts
 deep-translator
 pydub
 ffmpeg-python
-python-Levenshtein
-fuzzywuzzy
-scikit-learn
-spacy
