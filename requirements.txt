@@ -13,3 +13,5 @@ ffmpeg-python
 python-Levenshtein
 fuzzywuzzy
 scikit-learn
+spacy
+en-core-web-sm
