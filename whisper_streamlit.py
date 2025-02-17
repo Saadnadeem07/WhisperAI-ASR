@@ -6,38 +6,15 @@ import os
 import torch
 import soundfile as sf
 import numpy as np
-from textblob import TextBlob
+from collections import Counter
 from transformers import pipeline
-from gtts import gTTS
-from deep_translator import GoogleTranslator
-from pydub import AudioSegment  # For audio processing
+from pydub import AudioSegment
+from sklearn.feature_extraction.text import CountVectorizer
+from fuzzywuzzy import fuzz
+import spacy
 
 # ✅ Ensure FFmpeg Path
 AudioSegment.converter = "/usr/bin/ffmpeg"
-
-# ✅ Custom Modern UI Styling
-st.markdown("""
-    <style>
-    body { background-color: #121212; color: #E5C100; font-family: 'Arial', sans-serif; }
-    .stTextInput, .stFileUploader, .stTextArea, .stSelectbox, .stButton > button {
-        background-color: #333;
-        color: white;
-        border-radius: 8px;
-        padding: 10px;
-        font-size: 16px;
-    }
-    .stButton > button:hover {
-        background-color: #E5C100;
-        color: black;
-    }
-    .result-card {
-        background-color: #1E1E1E;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 2px 2px 15px rgba(229, 193, 0, 0.4);
-    }
-    </style>
-""", unsafe_allow_html=True)
 
 # ✅ Load Whisper Model (Optimized for CPU)
 @st.cache_resource
@@ -49,12 +26,10 @@ model = load_model()
 # ✅ Load NLP Models
 @st.cache_resource
 def load_nlp_models():
-    sentiment_model = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-    emotion_model = pipeline("text-classification", model="j-hartmann/emotion-english-distilroberta-base")
-    summarizer = pipeline("summarization", model="t5-small")  # Lighter model for Streamlit
-    return sentiment_model, emotion_model, summarizer
+    ner_model = spacy.load("en_core_web_sm")
+    return ner_model
 
-sentiment_model, emotion_model, summarizer = load_nlp_models()
+ner_model = load_nlp_models()
 
 # ✅ Preprocess Audio (Convert to Mono & 16kHz)
 def preprocess_audio(audio_path):
@@ -68,63 +43,45 @@ def preprocess_audio(audio_path):
         st.error(f"⚠ Audio Processing Failed: {str(e)}")
         return audio_path
 
-# ✅ Sentiment Analysis
-def analyze_sentiment(text):
-    if not text.strip():
-        return "Neutral"
-    result = sentiment_model(text)[0]
-    return f"🌟 **{result['label']}** (Confidence: {result['score']:.2f})"
+# ✅ Keyword Extraction
+def extract_keywords(text, num_keywords=5):
+    vectorizer = CountVectorizer(stop_words="english")
+    word_counts = vectorizer.fit_transform([text])
+    words = vectorizer.get_feature_names_out()
+    counts = word_counts.toarray().sum(axis=0)
+    keyword_counts = sorted(zip(words, counts), key=lambda x: x[1], reverse=True)
+    return [word for word, count in keyword_counts[:num_keywords]]
 
-# ✅ Emotion Detection
-def detect_emotion(text):
-    if not text.strip():
-        return "Neutral"
-    result = emotion_model(text)[0]
-    return f"🎭 **{result['label']}** (Confidence: {result['score']:.2f})"
+# ✅ Named Entity Recognition (NER)
+def named_entity_recognition(text):
+    doc = ner_model(text)
+    entities = [(ent.text, ent.label_) for ent in doc.ents]
+    return entities if entities else "No entities found."
 
-# ✅ Text Summarization
-def summarize_text(text):
-    if len(text.split()) < 30:
-        return "⚠ Text too short for summarization."
-    return summarizer(text, max_length=50, min_length=20, do_sample=False)[0]['summary_text']
+# ✅ Phonetic Similarity Check
+def phonetic_similarity(text, reference_text):
+    return fuzz.ratio(text, reference_text)
 
-# ✅ Translation
-def translate_text(text, target_language):
-    try:
-        return GoogleTranslator(source="auto", target=target_language).translate(text)
-    except Exception as e:
-        return f"⚠ Translation Error: {str(e)}"
-
-# ✅ Text-to-Speech
-def text_to_speech(text, lang="en"):
-    try:
-        output_path = "tts_output.mp3"
-        tts = gTTS(text=text, lang=lang)
-        tts.save(output_path)
-        return output_path
-    except:
-        return None
+# ✅ Word Frequency Analysis
+def word_frequency_analysis(text):
+    words = text.lower().split()
+    word_counts = Counter(words)
+    return word_counts.most_common(5)
 
 # ✅ Session Storage
 if "transcribed_text" not in st.session_state:
     st.session_state.transcribed_text = ""
-    st.session_state.sentiment_result = ""
-    st.session_state.emotion_result = ""
-    st.session_state.summary_result = ""
-    st.session_state.translated_text = ""
+    st.session_state.keyword_result = ""
+    st.session_state.ner_result = ""
+    st.session_state.similarity_score = ""
+    st.session_state.word_frequencies = ""
 
 # ✅ Upload Audio File
-st.markdown("<h1 style='text-align: center;'>🎙️ Whisper AI - Voice to Google Search with Analysis</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>🎙️ Whisper AI - Audio Processing & Analysis</h1>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader("📂 Upload your audio file", type=["mp3", "wav", "m4a"])
 
-# ✅ Language Selection
-language_mapping = {"English": "en", "Urdu": "ur", "Spanish": "es", "French": "fr", "Hindi": "hi"}
-language = st.selectbox("🌍 Select Language for Transcription", list(language_mapping.keys()), index=0)
-language_code = language_mapping[language]
-
-# ✅ Translation Selection
-translation_mapping = {"No Translation": None, "English": "en", "Urdu": "ur", "Spanish": "es", "French": "fr", "Hindi": "hi", "German": "de", "Chinese": "zh-CN"}
-translation_lang = st.selectbox("🌍 Translate Transcription To:", list(translation_mapping.keys()), index=0)
+# ✅ Reference Text for Similarity Check
+reference_text = st.text_area("✏️ Enter Reference Text for Phonetic Similarity Check:", "")
 
 if uploaded_file:
     st.audio(uploaded_file, format="audio/mp3")
@@ -135,15 +92,15 @@ if uploaded_file:
     temp_audio_path = preprocess_audio(temp_audio_path)
     
     if st.button("📝 Transcribe & Analyze"):
-        with st.spinner(f"Transcribing in {language}... Please wait."):
+        with st.spinner("Transcribing... Please wait."):
             try:
-                result = model.transcribe(temp_audio_path, language=language_code)
+                result = model.transcribe(temp_audio_path)
                 st.session_state.transcribed_text = result['text']
-                st.session_state.sentiment_result = analyze_sentiment(st.session_state.transcribed_text)
-                st.session_state.emotion_result = detect_emotion(st.session_state.transcribed_text)
-                st.session_state.summary_result = summarize_text(st.session_state.transcribed_text)
-                if translation_mapping[translation_lang]:
-                    st.session_state.translated_text = translate_text(st.session_state.transcribed_text, translation_mapping[translation_lang])
+                st.session_state.keyword_result = extract_keywords(st.session_state.transcribed_text)
+                st.session_state.ner_result = named_entity_recognition(st.session_state.transcribed_text)
+                st.session_state.word_frequencies = word_frequency_analysis(st.session_state.transcribed_text)
+                if reference_text:
+                    st.session_state.similarity_score = phonetic_similarity(st.session_state.transcribed_text, reference_text)
             except Exception as e:
                 st.error(f"⚠ Transcription Failed: {str(e)}")
     
@@ -153,12 +110,8 @@ if uploaded_file:
     if st.session_state.transcribed_text:
         st.markdown("<h2>📝 Results</h2>", unsafe_allow_html=True)
         st.text_area("📜 **Transcribed Text:**", st.session_state.transcribed_text, height=120)
-        st.write("💬 **Sentiment Analysis:**", st.session_state.sentiment_result)
-        st.write("🎭 **Emotion Analysis:**", st.session_state.emotion_result)
-        st.text_area("📄 **Summarized Text:**", st.session_state.summary_result, height=80)
-        if translation_mapping[translation_lang]:
-            st.text_area("🌍 **Translated Text:**", st.session_state.translated_text, height=80)
-        if st.button("🔍 Search on Google"):
-            search_query = st.session_state.transcribed_text.replace(" ", "+")
-            google_url = f"https://www.google.com/search?q={search_query}"
-            st.markdown(f'<a href="{google_url}" target="_blank">Click here to search</a>', unsafe_allow_html=True)
+        st.write("🔑 **Extracted Keywords:**", ", ".join(st.session_state.keyword_result))
+        st.write("🏷 **Named Entities:**", st.session_state.ner_result)
+        st.write("📊 **Word Frequency Analysis:**", st.session_state.word_frequencies)
+        if reference_text:
+            st.write(f"🎵 **Phonetic Similarity with Reference:** {st.session_state.similarity_score}%")
